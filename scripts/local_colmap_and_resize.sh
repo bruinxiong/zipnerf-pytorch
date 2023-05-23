@@ -2,7 +2,7 @@
 
 
 # Set to 0 if you do not have a GPU.
-USE_GPU=1
+USE_GPU=0
 # Path to a directory `base/` with images in `base/images/`.
 DATASET_PATH=$1
 # Recommended CAMERA values: OPENCV for perspective, OPENCV_FISHEYE for fisheye.
