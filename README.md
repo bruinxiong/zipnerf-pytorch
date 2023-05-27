@@ -6,25 +6,41 @@ An unofficial pytorch implementation of
 This work is based on [multinerf](https://github.com/google-research/multinerf), so features in refnerf,rawnerf,mipnerf360 are also available.
 
 ## News
-- Add extracting mesh; add logging,checkpointing system(5.22)
+- (5.26) Implement the latest version of ZipNeRF [https://arxiv.org/abs/2304.06706](https://arxiv.org/abs/2304.06706).
+- (5.22) Add extracting mesh; add logging,checkpointing system
 
 ## Results
-New results(5.9): 
+New results(5.27): 
 
 
 
-https://github.com/SuLvXiangXin/zipnerf-pytorch/assets/83005605/12a18a90-3e01-4500-8900-1078388f5604
+https://github.com/SuLvXiangXin/zipnerf-pytorch/assets/83005605/2b276e48-2dc4-4508-8441-e90ec963f7d9
 
 
+mesh results(5.27):
+
+<img width="852" alt="iShot_2023-05-28_02 06 23" src="https://github.com/SuLvXiangXin/zipnerf-pytorch/assets/83005605/8808f9f3-a025-4407-b06c-537d3209a682">
 
 
-|             | bicycle | garden | stump | room  | counter | kitchen | bonsai |
-|:-----------:|:-------:|:------:|:-----:|:-----:|:-------:|:-------:|:------:|
-|    PSNR     |  25.22  | 27.60  | 26.60 | 31.83 |  28.72  |  31.87  | 33.47  |
-|    SSIM     |  0.764  | 0.858  | 0.778 | 0.925 |  0.898  |  0.928  | 0.937  |
+Mipnerf360(PSNR):
 
-The model is trained with a downsample factor of 4 for outdoor scene and 2 for indoor scene(same as in paper).
+|           | bicycle | garden | stump | room  | counter | kitchen | bonsai |
+|:---------:|:-------:|:------:|:-----:|:-----:|:-------:|:-------:|:------:|
+|   Paper   |  25.80  | 28.20  | 27.55 | 32.65 |  29.38  |  32.50  | 34.46  |
+| This repo |  25.44  | 27.98  | 26.75 | 32.13 |  29.10  |  32.63  | 34.20  |
+
+
+Blender(PSNR):
+
+|           | chair | drums | ficus | hotdog | lego  | materials |  mic  | ship  |
+|:---------:|:-----:|:-----:|:-----:|:------:|:-----:|:---------:|:-----:|:-----:|
+|   Paper   | 34.84 | 25.84 | 33.90 | 37.14  | 34.84 |   31.66   | 35.15 | 31.38 |
+| This repo | 35.26 | 25.51 | 32.66 | 36.56  | 35.04 |   29.43   | 34.93 | 31.38 |
+
+For Mipnerf360 dataset, the model is trained with a downsample factor of 4 for outdoor scene and 2 for indoor scene(same as in paper).
 Training speed is about 1.5x slower than paper(1.5 hours on 8 A6000).
+
+The hash decay loss seems to have little effect(?), as many floaters can be found in the final results in both experiments (especially in Blender).
 
 This project is work-in-progress, and any advice will be appreciated.
 ## Install
@@ -44,7 +60,7 @@ pip install -r requirements.txt
 # Install other extensions
 pip install ./gridencoder
 
-# Install nvdiffrast
+# Install nvdiffrast (optional, for textured mesh)
 git clone https://github.com/NVlabs/nvdiffrast
 pip install ./nvdiffrast
 
@@ -55,11 +71,19 @@ pip install torch-scatter -f https://data.pyg.org/whl/torch-2.0.0+${CUDA}.html
 ```
 
 ## Dataset
-Only [mipnerf360 data](http://storage.googleapis.com/gresearch/refraw360/360_v2.zip) is tested
+[mipnerf360](http://storage.googleapis.com/gresearch/refraw360/360_v2.zip)
+
+[refnerf](https://storage.googleapis.com/gresearch/refraw360/ref.zip)
+
+[nerf_synthetic](https://drive.google.com/drive/folders/128yBriW1IG_3NJ5Rp7APSTZsJqdJdfc1)
+
+[nerf_llff_data](https://drive.google.com/drive/folders/128yBriW1IG_3NJ5Rp7APSTZsJqdJdfc1)
 
 ```
 mkdir data
 cd data
+
+# e.g. mipnerf360 data
 wget http://storage.googleapis.com/gresearch/refraw360/360_v2.zip
 unzip 360_v2.zip
 ```
@@ -81,17 +105,20 @@ accelerate launch train.py \
     --gin_configs=configs/360.gin \
     --gin_bindings="Config.data_dir = '${DATA_DIR}'" \
     --gin_bindings="Config.exp_name = '${EXP_NAME}'" \
-    --gin_bindings="Config.factor = 0"
+    --gin_bindings="Config.factor = 4"
 
 # or you can also run without accelerate (without DDP)
 CUDA_VISIBLE_DEVICES=0 python train.py \
     --gin_configs=configs/360.gin \
     --gin_bindings="Config.data_dir = '${DATA_DIR}'" \
     --gin_bindings="Config.exp_name = '${EXP_NAME}'" \
-      --gin_bindings="Config.factor = 0" 
+      --gin_bindings="Config.factor = 4" 
 
 # alternatively you can use an example training script 
 bash scripts/train_360.sh
+
+# blender dataset
+bash scripts/train_blender.sh
 
 # metric, render image, etc can be viewed through tensorboard
 tensorboard --logdir "exp/${EXP_NAME}"
@@ -108,7 +135,7 @@ accelerate launch render.py \
     --gin_bindings="Config.render_path = True" \
     --gin_bindings="Config.render_path_frames = 480" \
     --gin_bindings="Config.render_video_fps = 60" \
-    --gin_bindings="Config.factor = 0"  
+    --gin_bindings="Config.factor = 4"  
 
 # alternatively you can use an example rendering script 
 bash scripts/render_360.sh
@@ -121,7 +148,7 @@ accelerate launch eval.py \
     --gin_configs=configs/360.gin \
     --gin_bindings="Config.data_dir = '${DATA_DIR}'" \
     --gin_bindings="Config.exp_name = '${EXP_NAME}'" \
-    --gin_bindings="Config.factor = 0"
+    --gin_bindings="Config.factor = 4"
 
 
 # alternatively you can use an example evaluating script 
@@ -161,7 +188,7 @@ bash scripts/local_colmap_and_resize.sh ${DATA_DIR}
 ```
 
 ## TODO
-- [ ] Add MultiScale training and testing
+- [x] Add MultiScale training and testing
 
 ## Citation
 ```

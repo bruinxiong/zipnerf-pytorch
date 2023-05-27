@@ -247,6 +247,7 @@ class Dataset(torch.utils.data.Dataset):
         self._apply_bayer_mask = config.apply_bayer_mask
         self._render_spherical = False
 
+        self.config = config
         self.global_rank = config.global_rank
         self.world_size = config.world_size
         self.split = utils.DataSplit(split)
@@ -313,7 +314,10 @@ class Dataset(torch.utils.data.Dataset):
         return self._n_examples
 
     def __len__(self):
-        return self._n_examples
+        if self.split == utils.DataSplit.TRAIN and not self.config.compute_visibility:
+            return 1000
+        else:
+            return self._n_examples
 
     @abc.abstractmethod
     def _load_renderings(self, config):
@@ -382,7 +386,7 @@ class Dataset(torch.utils.data.Dataset):
 
         # Slow path, do ray computation using numpy (on CPU).
         batch = camera_utils.cast_ray_batch(self.cameras, pixels, self.camtype)
-        batch['cam_dirs'] = -self.camtoworlds[ray_kwargs['cam_idx'][..., 0]][..., 2]
+        batch['cam_dirs'] = -self.camtoworlds[ray_kwargs['cam_idx'][..., 0]][..., :3, 2]
 
         # import trimesh
         # pts = batch['origins'][..., None, :] + batch['directions'][..., None, :] * np.linspace(0, 1, 5)[:, None]
@@ -473,16 +477,7 @@ class Blender(Dataset):
         disp_images = []
         normal_images = []
         cams = []
-
-        if self.split == utils.DataSplit.TRAIN:
-            # load different training data on different rank
-            local_indices = [i for i in range(len(meta['frames'])) if (i + self.global_rank) % self.world_size == 0]
-        else:
-            local_indices = list(range(len(meta['frames'])))
-
-        for idx, frame in enumerate(meta['frames']):
-            if not idx in local_indices:
-                continue
+        for idx, frame in enumerate(tqdm(meta['frames'], desc='Loading Blender dataset', disable=self.global_rank != 0, leave=False)):
             fprefix = os.path.join(self.data_dir, frame['file_path'])
 
             def get_img(f, fprefix=fprefix):
@@ -656,7 +651,7 @@ class LLFF(Dataset):
             colmap_to_image = dict(zip(colmap_files, image_files))
             image_paths = [os.path.join(image_dir, colmap_to_image[f])
                            for f in image_names]
-            images = [utils.load_img(x) for x in tqdm(image_paths, desc='Loading images', leave=False)]
+            images = [utils.load_img(x) for x in tqdm(image_paths, desc='Loading LLFF dataset', disable=self.global_rank != 0, leave=False)]
             images = np.stack(images, axis=0) / 255.
 
             # EXIF data is usually only present in the original JPEG images.
@@ -750,7 +745,6 @@ class TanksAndTemplesFVS(Dataset):
         basedir = os.path.join(basedir, sizes[config.factor])
         open_fn = lambda f: utils.open_file(os.path.join(basedir, f), 'rb')
 
-        # TODO: need to rewrite this to push different data on different rank
         files = [f for f in sorted(utils.listdir(basedir)) if f.startswith('im_')]
         if render_only:
             files = files[:1]
@@ -814,17 +808,8 @@ class DTU(Dataset):
         # Find out whether the particular scan has 49 or 65 images.
         n_images = len(utils.listdir(self.data_dir)) // 8
 
-        if self.split == utils.DataSplit.TRAIN:
-            # load different training data on different rank
-            local_indices = [i for i in range(n_images) if (i + self.global_rank) % self.world_size == 0]
-        else:
-            local_indices = list(range(n_images))
-
         # Loop over all images.
         for i in range(1, n_images + 1):
-            if not (i - 1 in local_indices):
-                continue
-
             # Set light condition string accordingly.
             if config.dtu_light_cond < 7:
                 light_str = f'{config.dtu_light_cond}_r' + ('5000'
